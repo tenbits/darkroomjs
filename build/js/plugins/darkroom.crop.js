@@ -120,10 +120,19 @@
     startX: null,
     startY: null,
 
+    // Keycrop
+    isKeyCroping: false,
+    isKeyLeft: false,
+    isKeyUp: false,
+
     defaults: {
+      // min crop dimension
       minHeight: 1,
       minWidth: 1,
-      ratio: null
+      // ensure crop ratio
+      ratio: null,
+      // quick crop feature (set a key code to enable it)
+      quickCropKey: false
     },
 
     initialize: function InitDarkroomCropPlugin() {
@@ -154,6 +163,9 @@
       this.darkroom.canvas.on('mouse:up', this.onMouseUp.bind(this));
       this.darkroom.canvas.on('object:moving', this.onObjectMoving.bind(this));
       this.darkroom.canvas.on('object:scaling', this.onObjectScaling.bind(this));
+
+      fabric.util.addListener(fabric.document, 'keydown', this.onKeyDown.bind(this));
+      fabric.util.addListener(fabric.document, 'keyup', this.onKeyUp.bind(this));
 
       this.darkroom.addEventListener('image:change', this.releaseFocus.bind(this));
     },
@@ -198,8 +210,9 @@
         return;
 
       var canvas = this.darkroom.canvas;
-      var x = event.e.pageX - canvas._offset.left;
-      var y = event.e.pageY - canvas._offset.top;
+      throw '';
+      var x = event.e.clientX - canvas._offset.left;
+      var y = event.e.clientY - canvas._offset.top;
 
       var minX = currentObject.getLeft();
       var minY = currentObject.getTop();
@@ -248,8 +261,11 @@
       }
 
       var canvas = this.darkroom.canvas;
-      var x = event.e.pageX - canvas._offset.left;
-      var y = event.e.pageY - canvas._offset.top;
+      canvas.calcOffset();
+      var pointer = canvas.getPointer(event.e);
+      var x = pointer.x; //event.e.clientX - canvas._offset.left;
+      var y = pointer.y; //event.e.clientY - canvas._offset.top;
+
       var point = new fabric.Point(x, y);
 
       // Check if user want to scale or drag the crop zone.
@@ -270,15 +286,43 @@
 
     // Extend crop zone
     onMouseMove: function(event) {
+      // Quick crop feature
+      if (this.isKeyCroping)
+        return this.onMouseMoveKeyCrop(event);
+
       if (null === this.startX || null === this.startY) {
         return;
       }
 
       var canvas = this.darkroom.canvas;
-      var x = event.e.pageX - canvas._offset.left;
-      var y = event.e.pageY - canvas._offset.top;
+      var pointer = canvas.getPointer(event.e);
+      var x = pointer.x; //event.e.clientX - canvas._offset.left;
+      var y = pointer.y; //event.e.clientY - canvas._offset.top;
 
       this._renderCropZone(this.startX, this.startY, x, y);
+    },
+
+    onMouseMoveKeyCrop: function(event) {
+      var canvas = this.darkroom.canvas;
+      var zone = this.cropZone;
+throw '';
+      var x = event.e.clientX - canvas._offset.left;
+      var y = event.e.clientY - canvas._offset.top;
+
+      if (!zone.left || !zone.top) {
+        zone.setTop(y);
+        zone.setLeft(x);
+      }
+
+      this.isKeyLeft =  x < zone.left + zone.width / 2 ;
+      this.isKeyUp = y < zone.top + zone.height / 2 ;
+
+      this._renderCropZone(
+        Math.min(zone.left, x),
+        Math.min(zone.top, y),
+        Math.max(zone.left+zone.width, x),
+        Math.max(zone.top+zone.height, y)
+      );
     },
 
     // Finish crop zone
@@ -294,6 +338,32 @@
 
       this.startX = null;
       this.startY = null;
+    },
+
+    onKeyDown: function(event) {
+      if (false === this.options.quickCropKey || event.keyCode !== this.options.quickCropKey || this.isKeyCroping)
+        return;
+
+      // Active quick crop flow
+      this.isKeyCroping = true ;
+      this.darkroom.canvas.discardActiveObject();
+      this.cropZone.setWidth(0);
+      this.cropZone.setHeight(0);
+      this.cropZone.setScaleX(1);
+      this.cropZone.setScaleY(1);
+      this.cropZone.setTop(0);
+      this.cropZone.setLeft(0);
+    },
+
+    onKeyUp: function(event) {
+      if (false === this.options.quickCropKey || event.keyCode !== this.options.quickCropKey || !this.isKeyCroping)
+        return;
+
+      // Unactive quick crop flow
+      this.isKeyCroping = false;
+      this.startX = 1;
+      this.startY = 1;
+      this.onMouseUp();
     },
 
     selectZone: function(x, y, width, height, forceDimension) {
@@ -351,40 +421,37 @@
           return;
         }
 
-        var imgInstance = new fabric.Image(this, {
-          // options to make the image static
-          selectable: false,
-          evented: false,
-          lockMovementX: true,
-          lockMovementY: true,
-          lockRotation: true,
-          lockScalingX: true,
-          lockScalingY: true,
-          lockUniScaling: true,
-          hasControls: false,
-          hasBorders: false
-        });
-
-        var width = this.width;
-        var height = this.height;
-
-        // Update canvas size
-        canvas.setWidth(width);
-        canvas.setHeight(height);
-
-        // Add image
-        _this.darkroom.image.remove();
-        _this.darkroom.image = imgInstance;
-        canvas.add(imgInstance);
-
-        darkroom.dispatchEvent('image:change');
+        darkroom.image.remove();
+        darkroom
+          .createFabricImage(this)
+          .addFabricImage()
+          .dispatchEvent('image:change');
       };
 
+      var cropW = this.cropZone.getWidth(),
+          cropH = this.cropZone.getHeight(),
+          cropX = this.cropZone.getLeft(),
+          cropY = this.cropZone.getTop();
+
+      var source = darkroom.source;
+      if (source != null && canvas.getWidth() < source.width) {
+        var transform = source.width / canvas.getWidth();
+        var canvas$ = Darkroom.imgToCanvas(
+          source,
+          cropX * transform,
+          cropY * transform,
+          cropW * transform,
+          cropH * transform
+        );
+        image.src = canvas$.toDataURL();
+        return;
+      }
+  
       image.src = canvas.toDataURL({
-        left: this.cropZone.getLeft(),
-        top: this.cropZone.getTop(),
-        width: this.cropZone.getWidth(),
-        height: this.cropZone.getHeight()
+        left: cropX,
+        top: cropY,
+        width: cropW,
+        height: cropH
       });
     },
 
@@ -505,6 +572,11 @@
       if (this.options.ratio && +this.options.ratio !== currentRatio) {
         var ratio = +this.options.ratio;
 
+        if(this.isKeyCroping) {
+          isLeft = this.isKeyLeft;
+          isUp = this.isKeyUp;
+        }
+
         if (currentRatio < ratio) {
           var newWidth = height * ratio;
           if (isLeft) {
@@ -556,4 +628,6 @@
       this.darkroom.dispatchEvent('crop:update');
     }
   });
+  
+  
 })(window, document, Darkroom, fabric);
